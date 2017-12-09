@@ -17,5 +17,5 @@ Fork of Open-Source project CensorDodge @ https://www.censordodge.com/
   - Help with any problems that might arise, completely free.
 
 
-# Author
+# Founder
 Ryan Maber
