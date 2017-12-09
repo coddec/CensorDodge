@@ -15,6 +15,12 @@ Fork of Open-Source project CensorDodge @ https://www.censordodge.com/
   - Add additional features throughout the code easily.
 - Free lifetime support
   - Help with any problems that might arise, completely free.
+  
+  
+# Requirements
+- PHP 5.1 or higher
+- cURL
+- PHP DOMDocument
 
 
 # Founder
