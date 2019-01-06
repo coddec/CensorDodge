@@ -1,56 +1,52 @@
 <?php
-function FaceBook_preRequest() {
-    //Set "m_pixel_ratio" cookie for facebook (only signs in if cookie is set).
-    if (!isset($_COOKIE["m_pixel_ratio"])) {
-        setcookie("m_pixel_ratio","1");
-    }
-}
-
-function DailyMotion_postParse(&$page, $URL, $proxy) {
+function DailyMotion_preParse(&$page, $URL, $proxy) {
     if(preg_match('/video\/([^_]+)/', $URL, $matches)) { //Check if DailyMotion URL is a video
         $html = $proxy->curlRequest("http://www.dailymotion.com/embed/video/".$matches[1])["page"]; //Get basic embed video source
 
         if(preg_match_all('#type":"video\\\/mp4","url":"([^"]+)"#is', $html, $matches) && !$proxy->stripObjects) {
             $url = stripslashes(end($matches[1])); //Find the best available video source
 
-            //Build and insert basic video element into page which user can watch
-            $embed = "<embed src='".$proxy->proxyURL($url)."' style='box-sizing: border-box; -moz-box-sizing: border-box; -webkit-box-sizing: border-box; width: 100%; height: 100%;' bgcolor='000000' allowscriptaccess='always' allowfullscreen='true' />";
-            $page = preg_replace('#\<div\sid\=\"player_container(.*?)>.*?\<\/div\>#s', '<div id="player_container${1} style="width:880px; height:495px;">'.$embed.'</div>', $page, 1);
+            //Build and insert basic video element into page which users can watch
+            $randPlayerID = substr(md5(rand(0,500)),0,10);
+            $html = '<video style="width:100%;height:100%;" autoplay controls id="'.$randPlayerID.'"><source type="video/mp4" src="'.$url.'"></video>';
+            $page = preg_replace('#<div class="player-container">.*?</div>#s', '<div class="player_container" style="width:880px; height:495px;">'.$html.'</div>', $page, 1);
         }
     }
 }
 
 function YouTube_preRequest($page, $URL, $proxy) {
-    if (strpos($URL,"common.js")!==false) { exit; } //Fixes a search issue by blocking access to this js file
-    if (isset($proxy->customUserAgent)) { $UserAgent = $proxy->customUserAgent; } else { $UserAgent = $_SERVER['HTTP_USER_AGENT']; }
+	$cookies = file_get_contents($proxy->cookieDIR); $m = preg_grep("~^(\.youtube.*PREF.*f1\=[0-9]+)$~i",explode(PHP_EOL,$cookies));
+    if (!empty($m)) { $m = reset($m); file_put_contents($proxy->cookieDIR,str_replace($m,$m."&f6=8008&f5=30",$cookies)); }  else { file_put_contents($proxy->cookieDIR,$cookies."\n.youtube.com	TRUE	/	FALSE	1539395795	PREF	f1=50000000"); }
 
-    //Force any mobile user to be put on the YouTube desktop website
-    if (preg_match("/m.youtube.[a-zA-z]+/i", $URL) || preg_match("/(iPhone|iPod|iPad|Android|BlackBerry)/isU", $UserAgent)) {
-        $proxy->setURL(preg_replace("/m.youtube/i","youtube",$URL));
-        $proxy->customUserAgent = "Mozilla/5.0 (Windows NT 6.1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/41.0.2228.0 Safari/537.36";
+    //Add query string to migrate any mobile users to desktop app
+    if (preg_match("/\/m.youtube.[a-zA-z]+/i", $URL)) {
+        parse_str(parse_url($URL,PHP_URL_QUERY), $queries);
+        $queries = array_merge($queries, array("app" => "desktop", "persist_app" => "1", "noapp" => "1"));
+        $proxy->setURL(explode("?",preg_replace("/m.youtube/i","youtube",$URL,1))[0]."?".http_build_query($queries));
     }
 }
 
 function YouTube_preParse(&$page, $URL, $proxy) {
-    if (preg_match('#url_encoded_fmt_stream_map["\']:\s*["\']([^"\'\s]*)#', $page, $url_encoded_fmt_stream_map) && !$proxy->stripObjects) {
-        $url_encoded_fmt_stream_map[1] = preg_replace_callback('/\\\\u([0-9a-f]{4})/i', (function ($match) { return mb_convert_encoding(pack('H*', $match[1]), 'UTF-8', 'UCS-2BE'); }), $url_encoded_fmt_stream_map[1]);
-        $fmt_maps = explode(',', $url_encoded_fmt_stream_map[1]); //Find all video URLs
+    if (preg_match('@url_encoded_fmt_stream_map["\']:\s*["\']([^"\'\s]*)@', $page, $encodedStreamMap) && !$proxy->stripObjects) {
+        $encodedStreamMap[1] = preg_replace_callback('/\\\\u([0-9a-f]{4})/i', (function ($match) { return mb_convert_encoding(pack('H*', $match[1]), 'UTF-8', 'UCS-2BE'); }), $encodedStreamMap[1]);
+        $decodedMaps = explode(',', $encodedStreamMap[1]); //Find all video URLs
 
-        foreach($fmt_maps as $fmt_map) {
-            $url = $type = ''; parse_str($fmt_map); //Parse values in stream maps
-            if ($type!="x-flv") { //See if video is supported by player
-                $html = "<video controls autoplay style='width:100%; height:100%;'><source src='".$proxy->proxyURL($url)."'></video>";
+        foreach($decodedMaps as $map) {
+            $url = $type = ''; parse_str($map); //Parse values in stream maps
+            if (strpos($type,"x-flv")===false) { //See if video is supported by player
+                $randPlayerID = substr(md5(rand(0,500)),0,10);
+                $html = '<video style="width:100%;height:100%;" autoplay controls id="'.$randPlayerID.'"><source type="'.explode(";",$type)[0].'" src="'.$url.'"></source></video>';
                 $page = preg_replace('#<div id="player-api"([^>]*)>.*<div class="clear"#s', '<div id="player-api"$1>'.$html.'</div></div><div class="clear"', $page, 1);
                 break; //Video added to screen, exit out of loop now
             }
         }
     }
 
-    //Remove advertisement since this helps to speed up page load times
-    $page = preg_replace("#<div id=\"video-masthead.*?<\/div>#is",'',$page);
+    $page = str_replace(array("a=Ba().contentWindow.history.pushState,\"function\"==typeof a","\"function\"==typeof c"),"false",$page);
 }
 
-censorDodge::addAction("FaceBook_preRequest","preRequest","#facebook.[a-zA-z.]+#i");
-censorDodge::addAction("DailyMotion_postParse","postParse","#dailymotion.[a-zA-z.]+#i");
-censorDodge::addAction("YouTube_preRequest","preRequest","#(youtube|ytimg).[a-zA-z.]+#i");
-censorDodge::addAction("YouTube_preParse","preParse","#youtube.[a-zA-z.]+#i");
+if (class_exists("censorDodge")) { //Check that the class is accessible to add the function hooks
+    censorDodge::addAction("DailyMotion_preParse","preParse","#dailymotion.[a-zA-z.]+#i");
+    censorDodge::addAction("YouTube_preRequest","preRequest","#youtube.[a-zA-z.]+#i");
+    censorDodge::addAction("YouTube_preParse","preParse","#youtube.[a-zA-z.]+#i");
+}
